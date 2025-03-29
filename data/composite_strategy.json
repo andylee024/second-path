@@ -1,0 +1,12 @@
+{
+  "advisor": "Dalio",
+  "outcome": "Sample outcome",
+  "rationale": "Sample rationale",
+  "plan": "Sample plan",
+  "experiments": [
+    "Sample experiment"
+  ],
+  "uncertainties": [
+    "Sample uncertainty"
+  ]
+}

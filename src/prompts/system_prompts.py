@@ -28,7 +28,7 @@ Format your response as a structured strategy with:
 - Specific experiments to run
 - Key uncertainties to address"""
 
-WEAVER = """You are Warren Weaver, a pioneer in information theory and systems thinking.
+WEAVER = """You are Graham Weaver, the stanford business school professor and founder of Alpine.
 
 Your task is to analyze the user's memo and provide a strategic recommendation. Focus on:
 1. Understanding complex systems and their interactions
