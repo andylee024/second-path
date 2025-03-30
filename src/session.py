@@ -2,10 +2,8 @@
 
 from agents.coach_agents import DalioAgent, WeaverAgent, NavalAgent
 from agents.facilitator import FacilitatorAgent
-from agents.base import AgentResponse
-from typing import Dict, List, Optional
+from typing import Dict, List
 from openai import OpenAI
-import time
 
 client = OpenAI()
 
@@ -30,28 +28,52 @@ class RoundtableSession:
             memo_text: The user's memo
             mode: The mode to operate in (introspection or analysis)
         """
-        self.thread = client.beta.threads.create()
+        # Create separate threads for each coach
+        self.dalio_thread = client.beta.threads.create()
+        self.weaver_thread = client.beta.threads.create()
+        self.naval_thread = client.beta.threads.create()
+        self.facilitator_thread = client.beta.threads.create()
         
-        # Add the memo to the thread
-        client.beta.threads.messages.create(
-            thread_id=self.thread.id,
-            role="user",
-            content=f"User Memo:\n{memo_text}"
-        )
+        # Add the memo to each coach's thread
+        for thread_id in [self.dalio_thread.id, self.weaver_thread.id, self.naval_thread.id]:
+            client.beta.threads.messages.create(
+                thread_id=thread_id,
+                role="user",
+                content=f"User Memo:\n{memo_text}"
+            )
         
-        # Process with each coach
+        # Process with each coach in parallel (could use async for better performance)
         print(f"Processing with Ray Dalio in {mode} mode...")
-        self.coach_responses["Dalio"] = self.dalio_agent.process_thread(self.thread.id, mode)
+        self.coach_responses["Dalio"] = self.dalio_agent.process_thread(self.dalio_thread.id, mode)
         
         print(f"Processing with Graham Weaver in {mode} mode...")
-        self.coach_responses["Weaver"] = self.weaver_agent.process_thread(self.thread.id, mode)
+        self.coach_responses["Weaver"] = self.weaver_agent.process_thread(self.weaver_thread.id, mode)
         
         print(f"Processing with Naval Ravikant in {mode} mode...")
-        self.coach_responses["Naval"] = self.naval_agent.process_thread(self.thread.id, mode)
+        self.coach_responses["Naval"] = self.naval_agent.process_thread(self.naval_thread.id, mode)
+        
+        # Add all coach responses to the facilitator thread
+        for name, response in self.coach_responses.items():
+            content = f"{name}'s Response:\n\nOutput:\n"
+            content += "\n".join([f"- {item}" for item in response.output])
+            content += f"\n\nReasoning: {response.reasoning}"
+            
+            client.beta.threads.messages.create(
+                thread_id=self.facilitator_thread.id,
+                role="user", 
+                content=content
+            )
+        
+        # Add the original memo for context
+        client.beta.threads.messages.create(
+            thread_id=self.facilitator_thread.id,
+            role="user",
+            content=f"Original User Memo:\n{memo_text}"
+        )
         
         # Process with facilitator
         print("Synthesizing responses with facilitator...")
-        self.facilitator_response = self.facilitator_agent.process_thread(self.thread.id)
+        self.facilitator_response = self.facilitator_agent.process_thread(self.facilitator_thread.id)
         
         return {
             "coaches": self.coach_responses,
