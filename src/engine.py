@@ -7,9 +7,9 @@ from agents.base import Strategy
 class AgentEngine:
     def __init__(self):
         self.agents = [
-            NavalAgent(),
+            # NavalAgent(),
             DalioAgent(),
-            WeaverAgent()
+            # WeaverAgent()
         ]
 
     def generate_all_strategies(self, memo: Dict[str, Any]) -> Dict[str, Strategy]:

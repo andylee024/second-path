@@ -1,99 +1,185 @@
-import json
+"""Command-line interface for the Strategic Roundtable."""
+
+import argparse
+import sys
+import os
 from typing import Dict, Any
 from rich.console import Console
 from rich.panel import Panel
+from rich.table import Table
 from rich.prompt import Prompt, Confirm
-
-from engine import AgentEngine
-from agents.base import Strategy
+from session import RoundtableSession
+from utils import ensure_api_key, create_directory_if_not_exists
 
 console = Console()
 
-def display_memo(memo: Dict[str, Any]):
-    """Display the user's memo in a formatted way."""
+
+def display_memo(memo_text: str):
+    """Display the user's memo in a formatted panel.
+    
+    Args:
+        memo_text: The text of the user's memo
+    """
     console.print(Panel(
-        f"[bold]Name:[/bold] {memo['name']}\n"
-        f"[bold]Background:[/bold] {memo['background']}\n"
-        f"[bold]Goal:[/bold] {memo['goal']}\n"
-        f"[bold]Uncertainties:[/bold]\n" + 
-        "\n".join(f"- {u}" for u in memo['uncertainties']) + "\n"
-        f"[bold]Energy Signals:[/bold]\n" +
-        "\n".join(f"- {s}" for s in memo['energy_signals']),
+        memo_text,
         title="Your Career Memo",
         border_style="blue"
     ))
 
-def display_strategy(strategy: Strategy):
-    """Display a strategy in a formatted way."""
+
+def display_coach_response(response, show_reasoning=True):
+    """Display a coach's response in a formatted panel.
+    
+    Args:
+        response: The coach's response
+        show_reasoning: Whether to show the reasoning
+    """
+    content = "\n".join(response.output)
+    
+    if show_reasoning and response.reasoning:
+        content += f"\n\n[dim]Reasoning: {response.reasoning}[/dim]"
+    
     console.print(Panel(
-        f"[bold]Advisor:[/bold] {strategy.advisor}\n"
-        f"[bold]Desired Outcome:[/bold] {strategy.outcome}\n"
-        f"[bold]Rationale:[/bold] {strategy.rationale}\n"
-        f"[bold]Action Plan:[/bold] {strategy.plan}\n"
-        f"[bold]Experiments:[/bold]\n" +
-        "\n".join(f"- {e}" for e in strategy.experiments) + "\n"
-        f"[bold]Uncertainties:[/bold]\n" +
-        "\n".join(f"- {u}" for u in strategy.uncertainties),
-        title=f"{strategy.advisor}'s Strategy",
+        content,
+        title=f"{response.agent}'s {response.mode.capitalize()} Response",
         border_style="green"
     ))
 
-def main():
-    # Load the memo
+
+def display_facilitator_response(response):
+    """Display the facilitator's response in a formatted panel.
+    
+    Args:
+        response: The facilitator's response
+    """
+    # Create a table for common themes and tensions
+    themes_table = Table(title="Key Insights")
+    themes_table.add_column("Common Themes", style="green")
+    themes_table.add_column("Key Tensions", style="yellow")
+    
+    # Fill the table with themes and tensions
+    max_rows = max(len(response.common_themes), len(response.key_tensions))
+    for i in range(max_rows):
+        theme = response.common_themes[i] if i < len(response.common_themes) else ""
+        tension = response.key_tensions[i] if i < len(response.key_tensions) else ""
+        themes_table.add_row(theme, tension)
+    
+    # Create a panel for the synthesis
+    synthesis_panel = Panel(
+        response.synthesis,
+        title="Synthesis",
+        border_style="blue"
+    )
+    
+    # Create a panel for next steps
+    next_steps = "\n".join([f"• {step}" for step in response.next_steps])
+    next_steps_panel = Panel(
+        next_steps,
+        title="Next Steps",
+        border_style="green"
+    )
+    
+    # Display everything
+    console.print(themes_table)
+    console.print(synthesis_panel)
+    console.print(next_steps_panel)
+
+
+def load_memo(file_path: str) -> str:
+    """Load the memo from a file.
+    
+    Args:
+        file_path: The path to the memo file
+        
+    Returns:
+        The contents of the memo file
+    """
     try:
-        with open("data/memo.json", "r") as f:
-            memo = json.load(f)
+        with open(file_path, "r") as f:
+            return f.read()
     except FileNotFoundError:
-        console.print("[red]Error: memo.json not found in data directory[/red]")
-        return
+        console.print(f"[red]Error: Memo file not found at {file_path}[/red]")
+        sys.exit(1)
 
-    # Initialize the engine
-    engine = AgentEngine()
 
+def save_results(results: Dict[str, Any], file_path: str):
+    """Save the results to a file.
+    
+    Args:
+        results: The results to save
+        file_path: The path to save the results to
+    """
+    import json
+    
+    # Convert responses to dictionaries
+    serializable_results = {
+        "coaches": {
+            name: response.dict() for name, response in results["coaches"].items()
+        },
+        "facilitator": results["facilitator"].dict()
+    }
+    
+    with open(file_path, "w") as f:
+        json.dump(serializable_results, f, indent=2)
+    
+    console.print(f"[green]Results saved to {file_path}[/green]")
+
+
+def main():
+    """Run the Strategic Roundtable CLI."""
+    # Set up argument parser
+    parser = argparse.ArgumentParser(description="Strategic Roundtable Advisor")
+    parser.add_argument("--memo", "-m", type=str, default="data/memo.txt", help="Path to memo file")
+    parser.add_argument("--mode", type=str, choices=["introspection", "analysis"], default="introspection", help="Mode to operate in")
+    parser.add_argument("--hide-reasoning", action="store_true", help="Hide agent reasoning")
+    parser.add_argument("--output", "-o", type=str, help="Path to save results")
+    args = parser.parse_args()
+    
+    # Ensure API key is set
+    ensure_api_key()
+    
+    # Ensure data directory exists
+    create_directory_if_not_exists("data")
+    
     # Display welcome message
     console.print(Panel(
-        "[bold blue]Welcome to 2nd Path – Strategic Council[/bold blue]\n"
-        "Your advisors will analyze your memo and provide strategic recommendations.",
+        "[bold blue]Strategic Roundtable Advisor[/bold blue]\n"
+        "A council of expert advisors will analyze your career memo and provide insights.",
         border_style="blue"
     ))
-
+    
+    # Load the memo
+    memo_text = load_memo(args.memo)
+    
     # Display the memo
-    display_memo(memo)
+    display_memo(memo_text)
+    
+    # Confirm mode
+    console.print(f"\nOperating in [bold]{args.mode}[/bold] mode.")
+    if not Confirm.ask("Continue?"):
+        return
+    
+    # Start the session
+    session = RoundtableSession()
+    with console.status("[bold green]Working with your career council...[/bold green]", spinner="dots"):
+        results = session.start_session(memo_text, args.mode)
+    
+    # Display coach responses
+    console.print("\n[bold]Coach Responses:[/bold]")
+    for name, response in results["coaches"].items():
+        display_coach_response(response, not args.hide_reasoning)
+    
+    # Display facilitator response
+    console.print("\n[bold]Facilitator Synthesis:[/bold]")
+    display_facilitator_response(results["facilitator"])
+    
+    # Save results if requested
+    if args.output:
+        save_results(results, args.output)
+    elif Confirm.ask("\nWould you like to save the results?"):
+        output_path = Prompt.ask("Enter output path", default="data/roundtable_results.json")
+        save_results(results, output_path)
 
-    # Generate strategies
-    console.print("\n[bold]Generating strategies from your advisors...[/bold]")
-    strategies = engine.generate_all_strategies(memo)
-
-    # Review and accept/reject strategies
-    accepted_strategies = {}
-    for name, strategy in strategies.items():
-        display_strategy(strategy)
-        response = Prompt.ask(
-            f"\nDo you want to accept {name}'s strategy?",
-            choices=["y", "n", "tweak"],
-            default="n"
-        )
-        
-        if response == "y":
-            accepted_strategies[name] = strategy
-        elif response == "tweak":
-            # TODO: Implement strategy tweaking
-            console.print("[yellow]Strategy tweaking not yet implemented[/yellow]")
-            if Confirm.ask("Accept the original strategy?"):
-                accepted_strategies[name] = strategy
-
-    # Combine accepted strategies
-    if accepted_strategies:
-        console.print("\n[bold]Generating composite strategy...[/bold]")
-        composite = engine.combine_strategies(accepted_strategies)
-        display_strategy(composite)
-        
-        # Save the composite strategy
-        with open("data/composite_strategy.json", "w") as f:
-            json.dump(composite.dict(), f, indent=2)
-        console.print("[green]Composite strategy saved to data/composite_strategy.json[/green]")
-    else:
-        console.print("[red]No strategies were accepted. No composite strategy generated.[/red]")
 
 if __name__ == "__main__":
     main() 
