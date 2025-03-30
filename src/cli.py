@@ -129,7 +129,7 @@ def main():
     """Run the Strategic Roundtable CLI."""
     # Set up argument parser
     parser = argparse.ArgumentParser(description="Strategic Roundtable Advisor")
-    parser.add_argument("--memo", "-m", type=str, default="data/memo.txt", help="Path to memo file")
+    parser.add_argument("--memo", "-m", type=str, default="/Users/andylee/Projects/second-path/data/memo.txt", help="Path to memo file")
     parser.add_argument("--mode", type=str, choices=["introspection", "analysis"], default="introspection", help="Mode to operate in")
     parser.add_argument("--hide-reasoning", action="store_true", help="Hide agent reasoning")
     parser.add_argument("--output", "-o", type=str, help="Path to save results")
