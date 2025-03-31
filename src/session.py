@@ -9,76 +9,99 @@ client = OpenAI()
 
 
 class RoundtableSession:
-    """Manages a session of the Strategic Roundtable."""
+    """Interactive session manager for the Strategic Roundtable."""
     
     def __init__(self):
-        """Initialize a new session."""
-        self.thread = None
-        self.dalio_agent = DalioAgent()
-        self.weaver_agent = WeaverAgent()
-        self.naval_agent = NavalAgent()
+        self.coach_agents = {
+            "Dalio": DalioAgent(),
+            "Weaver": WeaverAgent(),
+            "Naval": NavalAgent()
+        }
         self.facilitator_agent = FacilitatorAgent()
-        self.coach_responses = {}
-        self.facilitator_response = None
-    
-    def start_session(self, memo_text: str, mode: str):
-        """Start a new session.
+        self.coach_threads = {}
+        self.facilitator_thread = None
+        self.conversation_history = []
         
-        Args:
-            memo_text: The user's memo
-            mode: The mode to operate in (introspection or analysis)
-        """
-        # Create separate threads for each coach
-        self.dalio_thread = client.beta.threads.create()
-        self.weaver_thread = client.beta.threads.create()
-        self.naval_thread = client.beta.threads.create()
-        self.facilitator_thread = client.beta.threads.create()
-        
-        # Add the memo to each coach's thread
-        for thread_id in [self.dalio_thread.id, self.weaver_thread.id, self.naval_thread.id]:
+    def initialize_session(self, memo_text: str):
+        """Initialize a new session with the user's memo."""
+        # Create threads for each agent
+        for coach_name in self.coach_agents:
+            self.coach_threads[coach_name] = client.beta.threads.create()
+            
+            # Add the memo to each coach's thread
             client.beta.threads.messages.create(
-                thread_id=thread_id,
+                thread_id=self.coach_threads[coach_name].id,
                 role="user",
                 content=f"User Memo:\n{memo_text}"
             )
         
-        # Process with each coach in parallel (could use async for better performance)
-        print(f"Processing with Ray Dalio in {mode} mode...")
-        self.coach_responses["Dalio"] = self.dalio_agent.process_thread(self.dalio_thread.id, mode)
+        # Create facilitator thread
+        self.facilitator_thread = client.beta.threads.create()
         
-        print(f"Processing with Graham Weaver in {mode} mode...")
-        self.coach_responses["Weaver"] = self.weaver_agent.process_thread(self.weaver_thread.id, mode)
-        
-        print(f"Processing with Naval Ravikant in {mode} mode...")
-        self.coach_responses["Naval"] = self.naval_agent.process_thread(self.naval_thread.id, mode)
-        
-        # Add all coach responses to the facilitator thread
-        for name, response in self.coach_responses.items():
-            content = f"{name}'s Response:\n\nOutput:\n"
-            content += "\n".join([f"- {item}" for item in response.output])
-            content += f"\n\nReasoning: {response.reasoning}"
-            
-            client.beta.threads.messages.create(
-                thread_id=self.facilitator_thread.id,
-                role="user", 
-                content=content
-            )
-        
-        # Add the original memo for context
+        # Add memo to facilitator thread
         client.beta.threads.messages.create(
             thread_id=self.facilitator_thread.id,
             role="user",
-            content=f"Original User Memo:\n{memo_text}"
+            content=f"User Memo:\n{memo_text}"
+        )
+    
+    def run_introspection_turn(self):
+        """Run a single turn of the introspection conversation.
+        
+        Returns:
+            Dictionary with selected questions, prompt, and coach responses
+        """
+        # 1. Get questions from all coaches
+        coach_responses = {}
+        for coach_name, agent in self.coach_agents.items():
+            print(f"Getting questions from {coach_name}...")
+            coach_responses[coach_name] = agent.process_thread(
+                self.coach_threads[coach_name].id, 
+                "introspection"
+            )
+        
+        # 2. Have facilitator select best questions
+        print("Facilitator selecting best questions...")
+        selection = self.facilitator_agent.select_best_questions(
+            self.facilitator_thread.id,
+            coach_responses
         )
         
-        # Process with facilitator
-        print("Synthesizing responses with facilitator...")
-        self.facilitator_response = self.facilitator_agent.process_thread(self.facilitator_thread.id)
-        
+        # 3. Return selection to be presented to user
         return {
-            "coaches": self.coach_responses,
-            "facilitator": self.facilitator_response
+            "questions": selection["selected_questions"],
+            "prompt": selection["user_prompt"],
+            "coach_responses": coach_responses
         }
+    
+    def process_user_response(self, user_response: str, asked_questions: list):
+        """Process the user's response and update context for all agents.
+        
+        Args:
+            user_response: The user's response to questions
+            asked_questions: The questions that were asked
+        """
+        # 1. Have facilitator process the response
+        context_update = self.facilitator_agent.process_user_response(
+            self.facilitator_thread.id,
+            user_response,
+            asked_questions
+        )
+        
+        # 2. Update all coach threads with the user's response and context
+        for coach_name, thread_id in self.coach_threads.items():
+            client.beta.threads.messages.create(
+                thread_id=thread_id,
+                role="user",
+                content=f"User's response to previous questions:\n\n{user_response}\n\n"
+                        f"Context for your next questions:\n{context_update}"
+            )
+        
+        # 3. Add to conversation history
+        self.conversation_history.append({
+            "questions": asked_questions,
+            "user_response": user_response
+        })
     
     def get_messages(self, limit: int = 10) -> List[Dict]:
         """Get the messages from the thread.
@@ -89,11 +112,11 @@ class RoundtableSession:
         Returns:
             A list of message dictionaries
         """
-        if not self.thread:
+        if not self.facilitator_thread:
             return []
         
         messages = client.beta.threads.messages.list(
-            thread_id=self.thread.id,
+            thread_id=self.facilitator_thread.id,
             order="desc",
             limit=limit
         )

@@ -2,7 +2,7 @@
 
 from openai import OpenAI
 from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any
+from typing import List, Dict
 import time
 import json
 
@@ -11,7 +11,6 @@ client = OpenAI()
 class AgentResponse(BaseModel):
     """Base response model for all agents."""
     agent: str
-    mode: str
     output: List[str]
     reasoning: str
 
@@ -22,14 +21,6 @@ class IntrospectionResponse(AgentResponse):
         default_factory=list,
         description="List of questions with reasoning"
     )
-
-
-class AnalysisResponse(AgentResponse):
-    """Response model for analysis mode."""
-    key_insight: str
-    recommendation: str
-    explanation: str
-    potential_barriers: List[str]
 
 
 class FacilitatorResponse(BaseModel):
@@ -61,14 +52,14 @@ class BaseAgent:
             "type": "function",
             "function": {
                 "name": "provide_response",
-                "description": "Provide a structured response based on the current mode",
+                "description": "Provide a structured response with questions",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "output": {
                             "type": "array",
                             "items": {"type": "string"},
-                            "description": "The main output (questions or recommendations)"
+                            "description": "The main output (questions for introspection)"
                         },
                         "reasoning": {
                             "type": "string",
@@ -87,33 +78,27 @@ class BaseAgent:
             tools=[tool_schema]
         )
     
-    def _get_mode_prompt(self, mode: str) -> str:
-        """Get the appropriate prompt for the given mode."""
-        from prompts.system_prompts import INTROSPECTION_MODE, ANALYSIS_MODE
-        
-        if mode == "introspection":
-            return INTROSPECTION_MODE
-        elif mode == "analysis":
-            return ANALYSIS_MODE
-        else:
-            raise ValueError(f"Unknown mode: {mode}")
+    def _get_introspection_prompt(self) -> str:
+        """Get the introspection mode prompt."""
+        from prompts.system_prompts import INTROSPECTION_MODE
+        return INTROSPECTION_MODE
     
-    def process_thread(self, thread_id: str, mode: str) -> AgentResponse:
+    def process_thread(self, thread_id: str, mode: str = "introspection") -> AgentResponse:
         """Process the thread with this agent.
         
         Args:
             thread_id: The ID of the thread to process
-            mode: The mode to operate in (introspection or analysis)
+            mode: The mode to operate in (introspection)
             
         Returns:
             The agent's response
         """
-        # Add a message instructing the agent on the mode
-        mode_prompt = self._get_mode_prompt(mode)
+        # Add a message instructing the agent on introspection mode
+        introspection_prompt = self._get_introspection_prompt()
         client.beta.threads.messages.create(
             thread_id=thread_id,
             role="user",
-            content=f"Please respond as {self.name} in {mode} mode.\n\n{mode_prompt}"
+            content=f"Please respond as {self.name} in introspection mode.\n\n{introspection_prompt}"
         )
         
         # Run the assistant
@@ -160,7 +145,6 @@ class BaseAgent:
             # Create the response
             return AgentResponse(
                 agent=self.name,
-                mode=mode,
                 output=response_data.get("output", []),
                 reasoning=response_data.get("reasoning", "")
             )
@@ -191,7 +175,6 @@ class BaseAgent:
                 
                 return AgentResponse(
                     agent=self.name,
-                    mode=mode,
                     output=output,
                     reasoning=reasoning
                 )
@@ -199,7 +182,6 @@ class BaseAgent:
         # Fallback for any errors
         return AgentResponse(
             agent=self.name,
-            mode=mode,
             output=["Failed to generate a proper response."],
             reasoning="Error in processing the thread."
         ) 

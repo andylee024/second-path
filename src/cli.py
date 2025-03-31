@@ -41,7 +41,7 @@ def display_coach_response(response, show_reasoning=True):
     
     console.print(Panel(
         content,
-        title=f"{response.agent}'s {response.mode.capitalize()} Response",
+        title=f"{response.agent}'s Questions",
         border_style="green"
     ))
 
@@ -125,14 +125,76 @@ def save_results(results: Dict[str, Any], file_path: str):
     console.print(f"[green]Results saved to {file_path}[/green]")
 
 
+def run_introspection_session(memo_text: str, max_turns=3, show_reasoning=True):
+    """Run an interactive introspection session."""
+    # Initialize session
+    session = RoundtableSession()
+    session.initialize_session(memo_text)
+    
+    # Display intro
+    console.print(Panel(
+        "Welcome to the Strategic Roundtable Introspection Session.\n"
+        "Our coaches will ask you thoughtful questions to help you gain clarity.",
+        title="Introspection Session",
+        border_style="blue"
+    ))
+    
+    # Run conversation turns
+    for turn in range(max_turns):
+        console.print(f"\n[bold]===== Turn {turn+1} of {max_turns} =====[/bold]")
+        
+        # Get questions for this turn
+        with console.status("[bold green]Coaches are thinking...[/bold green]"):
+            turn_result = session.run_introspection_turn()
+        
+        # Display all coach questions first
+        console.print("\n[bold]All Coach Questions:[/bold]")
+        for coach_name, response in turn_result["coach_responses"].items():
+            display_coach_response(response, show_reasoning)
+        
+        # Now display the facilitator's selected questions
+        console.print("\n[bold]Facilitator's Selected Questions:[/bold]")
+        console.print(Panel(
+            turn_result["prompt"],
+            title="Facilitator",
+            border_style="blue"
+        ))
+        
+        # For each selected question
+        selected_questions = []
+        for q in turn_result["questions"]:
+            console.print(f"[bold]{q['coach']}[/bold]: {q['question']}")
+            selected_questions.append(q)
+        
+        # Get user response
+        user_response = Prompt.ask("\n[bold cyan]Your response[/bold cyan]")
+        
+        # Process the response
+        with console.status("[bold green]Processing your response...[/bold green]"):
+            session.process_user_response(user_response, selected_questions)
+        
+        # Check if user wants to continue
+        if turn < max_turns - 1:
+            if not Confirm.ask("[yellow]Continue to next round?[/yellow]"):
+                break
+    
+    # Final message
+    console.print(Panel(
+        "Thank you for participating in this introspection session.\n"
+        "I hope these questions have helped you gain clarity.",
+        title="Session Complete",
+        border_style="green"
+    ))
+
+
 def main():
     """Run the Strategic Roundtable CLI."""
     # Set up argument parser
     parser = argparse.ArgumentParser(description="Strategic Roundtable Advisor")
     parser.add_argument("--memo", "-m", type=str, default="/Users/andylee/Projects/second-path/data/memo.txt", help="Path to memo file")
-    parser.add_argument("--mode", type=str, choices=["introspection", "analysis"], default="introspection", help="Mode to operate in")
     parser.add_argument("--hide-reasoning", action="store_true", help="Hide agent reasoning")
     parser.add_argument("--output", "-o", type=str, help="Path to save results")
+    parser.add_argument("--turns", "-t", type=int, default=3, help="Number of turns for introspection")
     args = parser.parse_args()
     
     # Ensure API key is set
@@ -144,7 +206,7 @@ def main():
     # Display welcome message
     console.print(Panel(
         "[bold blue]Strategic Roundtable Advisor[/bold blue]\n"
-        "A council of expert advisors will analyze your career memo and provide insights.",
+        "A council of expert advisors will help you reflect on your career memo.",
         border_style="blue"
     ))
     
@@ -154,31 +216,12 @@ def main():
     # Display the memo
     display_memo(memo_text)
     
-    # Confirm mode
-    console.print(f"\nOperating in [bold]{args.mode}[/bold] mode.")
-    if not Confirm.ask("Continue?"):
+    # Confirm to continue
+    if not Confirm.ask("\nReady to begin the introspection session?"):
         return
     
-    # Start the session
-    session = RoundtableSession()
-    with console.status("[bold green]Working with your career council...[/bold green]", spinner="dots"):
-        results = session.start_session(memo_text, args.mode)
-    
-    # Display coach responses
-    console.print("\n[bold]Coach Responses:[/bold]")
-    for name, response in results["coaches"].items():
-        display_coach_response(response, not args.hide_reasoning)
-    
-    # Display facilitator response
-    console.print("\n[bold]Facilitator Synthesis:[/bold]")
-    display_facilitator_response(results["facilitator"])
-    
-    # Save results if requested
-    if args.output:
-        save_results(results, args.output)
-    elif Confirm.ask("\nWould you like to save the results?"):
-        output_path = Prompt.ask("Enter output path", default="data/roundtable_results.json")
-        save_results(results, output_path)
+    # Run interactive introspection session
+    run_introspection_session(memo_text, args.turns, not args.hide_reasoning)
 
 
 if __name__ == "__main__":
