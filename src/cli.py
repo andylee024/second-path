@@ -102,29 +102,6 @@ def load_memo(file_path: str) -> str:
         sys.exit(1)
 
 
-def save_results(results: Dict[str, Any], file_path: str):
-    """Save the results to a file.
-    
-    Args:
-        results: The results to save
-        file_path: The path to save the results to
-    """
-    import json
-    
-    # Convert responses to dictionaries
-    serializable_results = {
-        "coaches": {
-            name: response.dict() for name, response in results["coaches"].items()
-        },
-        "facilitator": results["facilitator"].dict()
-    }
-    
-    with open(file_path, "w") as f:
-        json.dump(serializable_results, f, indent=2)
-    
-    console.print(f"[green]Results saved to {file_path}[/green]")
-
-
 def run_introspection_session(memo_text: str, max_turns=3, show_reasoning=True):
     """Run an interactive introspection session."""
     # Initialize session
@@ -193,7 +170,6 @@ def main():
     parser = argparse.ArgumentParser(description="Strategic Roundtable Advisor")
     parser.add_argument("--memo", "-m", type=str, default="/Users/andylee/Projects/second-path/data/memo.txt", help="Path to memo file")
     parser.add_argument("--hide-reasoning", action="store_true", help="Hide agent reasoning")
-    parser.add_argument("--output", "-o", type=str, help="Path to save results")
     parser.add_argument("--turns", "-t", type=int, default=3, help="Number of turns for introspection")
     args = parser.parse_args()
     

@@ -14,8 +14,8 @@ class RoundtableSession:
     def __init__(self):
         self.coach_agents = {
             "Dalio": DalioAgent(),
-            "Weaver": WeaverAgent(),
-            "Naval": NavalAgent()
+            # "Weaver": WeaverAgent(),
+            # "Naval": NavalAgent()
         }
         self.facilitator_agent = FacilitatorAgent()
         self.coach_threads = {}
@@ -26,21 +26,23 @@ class RoundtableSession:
         """Initialize a new session with the user's memo."""
         # Create threads for each agent
         for coach_name in self.coach_agents:
-            self.coach_threads[coach_name] = client.beta.threads.create()
+            thread = client.beta.threads.create()
+            self.coach_threads[coach_name] = thread.id
             
             # Add the memo to each coach's thread
             client.beta.threads.messages.create(
-                thread_id=self.coach_threads[coach_name].id,
+                thread_id=thread.id,
                 role="user",
                 content=f"User Memo:\n{memo_text}"
             )
         
         # Create facilitator thread
-        self.facilitator_thread = client.beta.threads.create()
+        thread = client.beta.threads.create()
+        self.facilitator_thread = thread.id
         
         # Add memo to facilitator thread
         client.beta.threads.messages.create(
-            thread_id=self.facilitator_thread.id,
+            thread_id=thread.id,
             role="user",
             content=f"User Memo:\n{memo_text}"
         )
@@ -56,14 +58,14 @@ class RoundtableSession:
         for coach_name, agent in self.coach_agents.items():
             print(f"Getting questions from {coach_name}...")
             coach_responses[coach_name] = agent.process_thread(
-                self.coach_threads[coach_name].id, 
+                self.coach_threads[coach_name], 
                 "introspection"
             )
         
         # 2. Have facilitator select best questions
         print("Facilitator selecting best questions...")
         selection = self.facilitator_agent.select_best_questions(
-            self.facilitator_thread.id,
+            self.facilitator_thread,
             coach_responses
         )
         
@@ -83,7 +85,7 @@ class RoundtableSession:
         """
         # 1. Have facilitator process the response
         context_update = self.facilitator_agent.process_user_response(
-            self.facilitator_thread.id,
+            self.facilitator_thread,
             user_response,
             asked_questions
         )
@@ -116,7 +118,7 @@ class RoundtableSession:
             return []
         
         messages = client.beta.threads.messages.list(
-            thread_id=self.facilitator_thread.id,
+            thread_id=self.facilitator_thread,
             order="desc",
             limit=limit
         )
