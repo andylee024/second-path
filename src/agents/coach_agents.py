@@ -4,6 +4,7 @@ from .base import BaseAgent
 from prompts.dalio_prompt import DALIO_PROMPT
 from prompts.weaver_prompt import WEAVER_PROMPT
 from prompts.naval_prompt import NAVAL_PROMPT
+
 class DalioAgent(BaseAgent):
     """Ray Dalio coach agent implementation."""
     

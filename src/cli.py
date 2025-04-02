@@ -6,162 +6,130 @@ import os
 from typing import Dict, Any
 from rich.console import Console
 from rich.panel import Panel
-from rich.table import Table
 from rich.prompt import Prompt, Confirm
-from session import RoundtableSession
+from session import RoundtableSession, Mode
 from utils import ensure_api_key, create_directory_if_not_exists
+from models import CareerMemo
 
 console = Console()
 
 
-def display_memo(memo_text: str):
-    """Display the user's memo in a formatted panel.
-    
-    Args:
-        memo_text: The text of the user's memo
-    """
-    console.print(Panel(
-        memo_text,
-        title="Your Career Memo",
-        border_style="blue"
-    ))
+def display_memo(memo: CareerMemo):
+    """Display the user's memo in a formatted panel."""
+    console.print(Panel(memo.content, title="Your Career Memo", border_style="blue"))
 
 
-def display_coach_response(response, show_reasoning=True):
-    """Display a coach's response in a formatted panel.
-    
-    Args:
-        response: The coach's response
-        show_reasoning: Whether to show the reasoning
-    """
-    content = "\n".join(response.output)
-    
-    if show_reasoning and response.reasoning:
-        content += f"\n\n[dim]Reasoning: {response.reasoning}[/dim]"
-    
-    console.print(Panel(
-        content,
-        title=f"{response.agent}'s Questions",
-        border_style="green"
-    ))
-
-
-def display_facilitator_response(response):
-    """Display the facilitator's response in a formatted panel.
-    
-    Args:
-        response: The facilitator's response
-    """
-    # Create a table for common themes and tensions
-    themes_table = Table(title="Key Insights")
-    themes_table.add_column("Common Themes", style="green")
-    themes_table.add_column("Key Tensions", style="yellow")
-    
-    # Fill the table with themes and tensions
-    max_rows = max(len(response.common_themes), len(response.key_tensions))
-    for i in range(max_rows):
-        theme = response.common_themes[i] if i < len(response.common_themes) else ""
-        tension = response.key_tensions[i] if i < len(response.key_tensions) else ""
-        themes_table.add_row(theme, tension)
-    
-    # Create a panel for the synthesis
-    synthesis_panel = Panel(
-        response.synthesis,
-        title="Synthesis",
-        border_style="blue"
-    )
-    
-    # Create a panel for next steps
-    next_steps = "\n".join([f"• {step}" for step in response.next_steps])
-    next_steps_panel = Panel(
-        next_steps,
-        title="Next Steps",
-        border_style="green"
-    )
-    
-    # Display everything
-    console.print(themes_table)
-    console.print(synthesis_panel)
-    console.print(next_steps_panel)
-
-
-def load_memo(file_path: str) -> str:
-    """Load the memo from a file.
-    
-    Args:
-        file_path: The path to the memo file
-        
-    Returns:
-        The contents of the memo file
-    """
-    try:
-        with open(file_path, "r") as f:
-            return f.read()
-    except FileNotFoundError:
-        console.print(f"[red]Error: Memo file not found at {file_path}[/red]")
-        sys.exit(1)
-
-
-def run_introspection_session(memo_text: str, max_turns=3, show_reasoning=True):
-    """Run an interactive introspection session."""
-    # Initialize session
-    session = RoundtableSession()
-    session.initialize_session(memo_text)
+def run_session(memo: CareerMemo, max_turns=3):
+    """Run an interactive session with both introspection and memo modes."""
+    # Initialize session with memo
+    session = RoundtableSession(memo)
+    current_mode: Mode = "introspection"
+    user_response = None
     
     # Display intro
     console.print(Panel(
-        "Welcome to the Strategic Roundtable Introspection Session.\n"
-        "Our coaches will ask you thoughtful questions to help you gain clarity.",
-        title="Introspection Session",
+        "Welcome to the Strategic Roundtable Session.\n"
+        "You can switch between introspection mode (for coach questions) and memo mode (for updated drafts) at any time.",
+        title="Session Start",
         border_style="blue"
     ))
     
     # Run conversation turns
-    for turn in range(max_turns):
+    turn = 0
+    while turn < max_turns:
         console.print(f"\n[bold]===== Turn {turn+1} of {max_turns} =====[/bold]")
+        console.print(f"[dim]Current Mode: {current_mode.title()}[/dim]")
         
-        # Get questions for this turn
-        with console.status("[bold green]Coaches are thinking...[/bold green]"):
-            turn_result = session.run_introspection_turn()
-        
-        # Display all coach questions first
-        console.print("\n[bold]All Coach Questions:[/bold]")
-        for coach_name, response in turn_result["coach_responses"].items():
-            display_coach_response(response, show_reasoning)
-        
-        # Now display the facilitator's selected questions
-        console.print("\n[bold]Facilitator's Selected Questions:[/bold]")
-        console.print(Panel(
-            turn_result["prompt"],
-            title="Facilitator",
-            border_style="blue"
-        ))
-        
-        # For each selected question
-        selected_questions = []
-        for q in turn_result["questions"]:
-            console.print(f"[bold]{q['coach']}[/bold]: {q['question']}")
-            selected_questions.append(q)
+        # Get updates for this turn
+        with console.status("[bold green]Processing...[/bold green]"):
+            try:
+                turn_result = session.run_turn(mode=current_mode, user_response=user_response)
+                
+                # Display current memo
+                display_memo(turn_result["current_memo"])
+                
+                if current_mode == "introspection":
+                    # Display facilitator analysis
+                    console.print(Panel(
+                        turn_result["facilitator_analysis"],
+                        title="Facilitator's Analysis",
+                        border_style="red"
+                    ))
+                    
+                    # Display coach questions
+                    for response in turn_result["coach_responses"]:
+                        console.print(Panel(
+                            response["questions"],
+                            title=f"Questions from {response['coach']}",
+                            border_style="yellow"
+                        ))
+                else:
+                    # Display facilitator's response in memo mode
+                    console.print(Panel(
+                        turn_result["facilitator_response"],
+                        title="Facilitator's Updated Memo",
+                        border_style="green"
+                    ))
+            
+            except Exception as e:
+                console.print(f"[bold red]Error: {str(e)}[/bold red]")
+                console.print("[red]Attempting to continue...[/red]")
         
         # Get user response
         user_response = Prompt.ask("\n[bold cyan]Your response[/bold cyan]")
         
-        # Process the response
-        with console.status("[bold green]Processing your response...[/bold green]"):
-            session.process_user_response(user_response, selected_questions)
-        
-        # Check if user wants to continue
+        # Ask about mode switching
         if turn < max_turns - 1:
-            if not Confirm.ask("[yellow]Continue to next round?[/yellow]"):
+            mode_choice = Prompt.ask(
+                "\n[bold yellow]What would you like to do next?[/bold yellow]",
+                choices=["continue", "switch_mode", "end"],
+                default="continue"
+            )
+            
+            if mode_choice == "switch_mode":
+                current_mode = "memo" if current_mode == "introspection" else "introspection"
+                console.print(f"\n[green]Switched to {current_mode.title()} Mode[/green]")
+            elif mode_choice == "end":
                 break
+        
+        turn += 1
     
     # Final message
     console.print(Panel(
-        "Thank you for participating in this introspection session.\n"
-        "I hope these questions have helped you gain clarity.",
+        "Thank you for participating in this session.\n"
+        "I hope this has helped you gain clarity on your career direction.",
         title="Session Complete",
         border_style="green"
     ))
+
+
+def load_memo(file_path: str) -> CareerMemo:
+    """Load the memo from a file."""
+    try:
+        with open(file_path, "r") as f:
+            content = f.read()
+            # Just load the raw content without parsing
+            return CareerMemo(
+                content=content,
+                northstar="",
+                narrative="",
+                problems="",
+                root_cause="",
+                outcomes="",
+                strategy="",
+                experiments=""
+            )
+    except FileNotFoundError:
+        console.print(f"[red]Error: Memo file not found at {file_path}[/red]")
+        sys.exit(1)
+    except Exception as e:
+        console.print(f"[red]Error loading memo: {str(e)}[/red]")
+        console.print("[yellow]Using empty memo...[/yellow]")
+        return CareerMemo(
+            content="",
+            northstar="", narrative="", problems="", 
+            root_cause="", outcomes="", strategy="", experiments=""
+        )
 
 
 def main():
@@ -169,7 +137,6 @@ def main():
     # Set up argument parser
     parser = argparse.ArgumentParser(description="Strategic Roundtable Advisor")
     parser.add_argument("--memo", "-m", type=str, default="/Users/andylee/Projects/second-path/data/memo.txt", help="Path to memo file")
-    parser.add_argument("--hide-reasoning", action="store_true", help="Hide agent reasoning")
     parser.add_argument("--turns", "-t", type=int, default=3, help="Number of turns for introspection")
     args = parser.parse_args()
     
@@ -187,17 +154,17 @@ def main():
     ))
     
     # Load the memo
-    memo_text = load_memo(args.memo)
+    memo = load_memo(args.memo)
     
     # Display the memo
-    display_memo(memo_text)
+    display_memo(memo)
     
     # Confirm to continue
-    if not Confirm.ask("\nReady to begin the introspection session?"):
+    if not Confirm.ask("\nReady to begin the session?"):
         return
     
-    # Run interactive introspection session
-    run_introspection_session(memo_text, args.turns, not args.hide_reasoning)
+    # Run interactive session
+    run_session(memo, args.turns)
 
 
 if __name__ == "__main__":

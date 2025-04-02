@@ -1,133 +1,137 @@
-"""Session manager for the Strategic Roundtable."""
+"""Session management for the Strategic Roundtable."""
 
-from agents.coach_agents import DalioAgent, WeaverAgent, NavalAgent
+from typing import Dict, Literal, Optional
+from models import CareerMemo
 from agents.facilitator import FacilitatorAgent
-from typing import Dict, List
+from agents.coach_agents import DalioAgent, WeaverAgent, NavalAgent
+import time
 from openai import OpenAI
 
+Mode = Literal["introspection", "memo"]
 client = OpenAI()
 
-
 class RoundtableSession:
-    """Interactive session manager for the Strategic Roundtable."""
+    """Manages a roundtable session with coaches and facilitator."""
     
-    def __init__(self):
-        self.coach_agents = {
-            "Dalio": DalioAgent(),
-            # "Weaver": WeaverAgent(),
-            # "Naval": NavalAgent()
-        }
-        self.facilitator_agent = FacilitatorAgent()
-        self.coach_threads = {}
-        self.facilitator_thread = None
-        self.conversation_history = []
+    def __init__(self, memo: CareerMemo):
+        """Initialize the session.
         
-    def initialize_session(self, memo_text: str):
-        """Initialize a new session with the user's memo."""
-        # Create threads for each agent
-        for coach_name in self.coach_agents:
-            thread = client.beta.threads.create()
-            self.coach_threads[coach_name] = thread.id
-            
-            # Add the memo to each coach's thread
-            client.beta.threads.messages.create(
-                thread_id=thread.id,
-                role="user",
-                content=f"User Memo:\n{memo_text}"
-            )
-        
-        # Create facilitator thread
-        thread = client.beta.threads.create()
-        self.facilitator_thread = thread.id
-        
-        # Add memo to facilitator thread
-        client.beta.threads.messages.create(
-            thread_id=thread.id,
-            role="user",
-            content=f"User Memo:\n{memo_text}"
-        )
-    
-    def run_introspection_turn(self):
-        """Run a single turn of the introspection conversation.
-        
-        Returns:
-            Dictionary with selected questions, prompt, and coach responses
+        Args:
+            memo: The user's career memo
         """
-        # 1. Get questions from all coaches
-        coach_responses = {}
-        for coach_name, agent in self.coach_agents.items():
-            print(f"Getting questions from {coach_name}...")
-            coach_responses[coach_name] = agent.process_thread(
-                self.coach_threads[coach_name], 
-                "introspection"
+        self.memo = memo
+        self.facilitator = FacilitatorAgent()
+        self.coaches = [
+            DalioAgent(),
+            WeaverAgent(),
+            NavalAgent()
+        ]
+        
+        # Initialize threads for each agent
+        self.facilitator.create_thread()
+        for coach in self.coaches:
+            coach.create_thread()
+    
+    def _get_last_response(self, agent, run) -> str:
+        """Get the last response from an agent after a run completes.
+        
+        Args:
+            agent: The agent whose response we want
+            run: The run object from the assistant
+            
+        Returns:
+            The last response text
+        """
+        # Wait for run to complete
+        while run.status in ["queued", "in_progress"]:
+            time.sleep(1)
+            run = client.beta.threads.runs.retrieve(
+                thread_id=agent.thread.id,
+                run_id=run.id
             )
         
-        # 2. Have facilitator select best questions
-        print("Facilitator selecting best questions...")
-        selection = self.facilitator_agent.select_best_questions(
-            self.facilitator_thread,
-            coach_responses
-        )
+        if run.status == "completed":
+            messages = client.beta.threads.messages.list(
+                thread_id=agent.thread.id,
+                order="desc",
+                limit=1
+            )
+            return messages.data[0].content[0].text.value
+        else:
+            raise Exception(f"Run failed with status: {run.status}")
+    
+    def run_turn(self, mode: Mode, user_response: Optional[str] = None) -> Dict:
+        """Run a single turn of the session.
         
-        # 3. Return selection to be presented to user
+        Args:
+            mode: The current mode ("introspection" or "memo")
+            user_response: The user's response to previous questions (optional)
+            
+        Returns:
+            Dictionary containing the current state and next steps
+        """
+        if mode == "introspection":
+            return self._run_introspection_turn(user_response)
+        else:
+            return self._run_memo_turn(user_response)
+    
+    def _run_introspection_turn(self, user_response: Optional[str] = None) -> Dict:
+        """Run a turn in introspection mode.
+        
+        Args:
+            user_response: The user's response to previous questions (optional)
+            
+        Returns:
+            Dictionary containing the current state and next steps
+        """
+        # Step 1: Facilitator analyzes the memo
+        self.facilitator.add_message(f"Please analyze this career memo and identify areas that need improvement:\n\n{self.memo.content}")
+        facilitator_analysis = self.facilitator.run_assistant()
+        
+        # Step 2: Get questions from each coach based on facilitator's analysis
+        coach_responses = []
+        for coach in self.coaches:
+            coach.add_message(f"""Here is a career memo:
+            
+{self.memo.content}
+
+The facilitator has identified these areas for improvement: 
+{facilitator_analysis}
+                            
+Based on this analysis, what questions would you ask to help strengthen these areas?""")
+            
+            coach_questions = coach.run_assistant()
+            coach_responses.append({
+                "coach": coach.name,
+                "questions": coach_questions
+            })
+        
         return {
-            "questions": selection["selected_questions"],
-            "prompt": selection["user_prompt"],
+            "current_memo": self.memo,
+            "facilitator_analysis": facilitator_analysis,
             "coach_responses": coach_responses
         }
     
-    def process_user_response(self, user_response: str, asked_questions: list):
-        """Process the user's response and update context for all agents.
+    def _run_memo_turn(self, user_response: Optional[str] = None) -> Dict:
+        """Run a turn in memo mode.
         
         Args:
-            user_response: The user's response to questions
-            asked_questions: The questions that were asked
-        """
-        # 1. Have facilitator process the response
-        context_update = self.facilitator_agent.process_user_response(
-            self.facilitator_thread,
-            user_response,
-            asked_questions
-        )
-        
-        # 2. Update all coach threads with the user's response and context
-        for coach_name, thread_id in self.coach_threads.items():
-            client.beta.threads.messages.create(
-                thread_id=thread_id,
-                role="user",
-                content=f"User's response to previous questions:\n\n{user_response}\n\n"
-                        f"Context for your next questions:\n{context_update}"
-            )
-        
-        # 3. Add to conversation history
-        self.conversation_history.append({
-            "questions": asked_questions,
-            "user_response": user_response
-        })
-    
-    def get_messages(self, limit: int = 10) -> List[Dict]:
-        """Get the messages from the thread.
-        
-        Args:
-            limit: The maximum number of messages to retrieve
+            user_response: The user's response to previous questions (optional)
             
         Returns:
-            A list of message dictionaries
+            Dictionary containing the current state and next steps
         """
-        if not self.facilitator_thread:
-            return []
+        prompt = f"Please help draft an updated career memo based on this current version:\n\n{self.memo}"
+        if user_response:
+            prompt += f"\n\nUser's Response:\n{user_response}"
+            
+        self.facilitator.add_message(prompt)
+        facilitator_response = self.facilitator.run_assistant()
         
-        messages = client.beta.threads.messages.list(
-            thread_id=self.facilitator_thread,
-            order="desc",
-            limit=limit
-        )
+        # Update the memo content with the facilitator's response
+        self.memo.content = facilitator_response
         
-        return [
-            {
-                "role": message.role,
-                "content": message.content[0].text.value if message.content else "",
-                "created_at": message.created_at
-            }
-            for message in messages.data
-        ] 
+        return {
+            "current_memo": self.memo,
+            "facilitator_response": facilitator_response
+        }
